@@ -13,6 +13,7 @@
 #include <yarp/dev/PolyDriver.h>
 #include <yarp/dev/Wrapper.h>
 #include <yarp/dev/SerialInterfaces.h>
+#include <yarp/dev/ISerialDevice.h>
 #include <yarp/dev/PreciselyTimed.h>
 
 #include <yarp/os/PeriodicThread.h>

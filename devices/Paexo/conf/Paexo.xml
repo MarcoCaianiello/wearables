@@ -7,8 +7,8 @@
     <device type="serialport" name="SerialportDevice">
         <param name="verbose"> 0 </param>
         <!--param name="comport"> COM2 </param-->        <!--  //windows     -->
-        <param name="comport">  /dev/ttyACM0 </param>   <!--    //linux     -->
-        <param name="baudrate"> 115200 </param>
+        <param name="comport">  /dev/ttyACM0 </param>   <!--    //linux  sudo chmod a+rw /dev/ttyACM0 -->
+        <param name="baudrate"> 115200 </param>  <!--115200 57600 9600--> 
         <param name="xonlim"> 0 </param>
         <param name="xofflim"> 0 </param>
         <param name="readmincharacters"> 0 </param>
@@ -31,7 +31,7 @@
 
     <!--Paexo Device-->
     <device type="paexo" name="PaexoWearableDevice">
-        <param name="period">0.01</param>
+        <param name="period">0.01</param> <!-- 0.01  --> 
         <param name="portsPrefixName">/wearable/paexo</param>
         <group name="iFeelDriver">
             <group name="serial-config">
@@ -50,7 +50,7 @@
     </device>
 
     <device type="iwear_wrapper" name="PaexoWearableDeviceWrapper">
-        <param name="period">0.01</param>
+        <param name="period">0.05</param>
         <param name="dataPortName">/Paexo/WearableData/data:o</param>
         <param name="rpcPortName">/Paexo/WearableData/metadataRpc:o</param>
         <action phase="startup" level="5" type="attach">
@@ -62,7 +62,7 @@
     </device>
 
     <device type="iwearactuators_wrapper" name="PaexoWearableDeviceActuatorsWrapper">
-        <param name="period">0.01</param>
+        <param name="period">0.05</param>
         <param name="actuatorCommandInputPortName">/Paexo/WearableActuatorsCommand/input:i</param>
         <action phase="startup" level="5" type="attach">
             <paramlist name="networks">
@@ -70,7 +70,7 @@
             </paramlist>
         </action>
         <action phase="shutdown" level="4" type="detach"/>
-    </device>
+    </device >
 
     <device type="iwear_logger" name="ProducerLoggerDevice">
         <param name="period">0.01</param>

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2020 iCub Facility
- * Authors: Yeshasvi Tirupachuri
+ * Authors: Yeshasvi Tirupachuri, Marco Caianiello
  * CopyPolicy: Released under the terms of the LGPLv2.1 or later, see LGPL.TXT
  */
 
@@ -27,7 +27,7 @@
 
 const std::string DeviceName = "Paexo";
 const std::string LogPrefix = DeviceName + wearable::Separator;
-double period = 0.01;
+double period = 0.1; //0.05
 
 using namespace wearable;
 using namespace wearable::devices;
@@ -41,8 +41,11 @@ struct PaexoData
 {
     bool updated;
     double angle;
-    double force;
-    double leverarm;
+    double springForce;
+    double rightLeverarm;
+    double leftLeverarm;
+    double encoderTime;
+    double leverarmTime;
 };
 
 class Paexo::PaexoImpl
@@ -51,7 +54,7 @@ public:
     std::unique_ptr<yarp::os::Network> network = nullptr;
 
     mutable std::mutex mutex;
-    yarp::dev::ISerialDevice* iSerialDevice = nullptr;
+    yarp::dev::ISerialDevice* iSerialDevice; // = nullptr;
 
     wearable::TimeStamp timeStamp;
 
@@ -148,7 +151,7 @@ public:
     }
 
     // Number of sensors
-    const int nSensors = 3; // Hardcoded for Paexo
+    const int nSensors = 5; // 3 Hardcoded for Paexo
 
     // Numbe of actuators
     const int nActuators = 1; // Hardcoded for Paexo
@@ -476,8 +479,9 @@ bool Paexo::open(yarp::os::Searchable& config)
 
     // Initialize paexo data buffer
     pImpl->paexoData.angle = 0.0;
-    pImpl->paexoData.force = 0.0;
-    pImpl->paexoData.leverarm = 0.0;
+    pImpl->paexoData.springForce = 0.0;
+    pImpl->paexoData.rightLeverarm = 0.0;
+    pImpl->paexoData.leftLeverarm = 0.0;
     pImpl->paexoData.updated = false;
 
     // Initialize first data flag
@@ -564,7 +568,7 @@ public:
         assert(paexoImpl != nullptr);
 
         std::lock_guard<std::mutex> lock(paexoImpl->mutex);
-        force[0] = paexoImpl->paexoData.force;
+        force[0] = paexoImpl->paexoData.springForce;
         force[1] = 0.0;
         force[2] = 0.0;
         return true;
@@ -598,7 +602,7 @@ public:
         assert(paexoImpl != nullptr);
 
         std::lock_guard<std::mutex> lock(paexoImpl->mutex);
-        torque[0] = paexoImpl->paexoData.leverarm;
+        torque[0] = paexoImpl->paexoData.rightLeverarm; // NOT CORRECT
         torque[1] = 0.0;
         torque[2] = 0.0;
         return true;
@@ -639,12 +643,34 @@ public:
         // Get FT Data from front or back FT using iFeelDriver data
         // TODO: Cleanup ftData buffer handling
         paexoImpl->ifeelData = paexoImpl->ifeelDriver->getData();
+        iFeel::ForceTorque ftData;
+        iFeel::Utils::DataTypes::NodeID nodeID;
 
-        auto it = paexoImpl->ifeelData.FTShoeNodes.begin();
-        iFeel::Utils::DataTypes::NodeID nodeID = it->first;
+        std::vector<uint8_t> nodeIDs = paexoImpl->ifeelDriver->getRegisteredNodeIDs();
+        uint8_t useFTShoeIMUNodes =
+            (FTSHOE_IMU_DATA_ID == paexoImpl->ifeelDriver->getNodeType(nodeIDs[0])) ? 1 : 0;
 
+        if (useFTShoeIMUNodes) {
+            // Use iFeel Shoe IMU Node
+            auto it = paexoImpl->ifeelData.FTShoeIMUNodes.begin();
+            nodeID = it->first;
+        }
+        else {
+            // Use iFeel Shoe IMU Node
+            auto it = paexoImpl->ifeelData.FTShoeNodes.begin();
+            nodeID = it->first;
+        }
+
+        // Right or Left Depends on Firmware loaded on Node
+        // Front or Back Depends on the wich connector the FT is connected on the Node board
         if (this->getSensorName().find("Left") != std::string::npos) {
-            iFeel::ForceTorque ftData = paexoImpl->ifeelData.FTShoeNodes[nodeID]->getFrontFT();
+            // iFeel::ForceTorque ftData;
+            if (useFTShoeIMUNodes) {
+                ftData = paexoImpl->ifeelData.FTShoeIMUNodes[nodeID]->getBackFT(); // getFrontFT();
+            }
+            else {
+                ftData = paexoImpl->ifeelData.FTShoeNodes[nodeID]->getBackFT(); // getFrontFT();
+            }
 
             force3D[0] = ftData.x;
             force3D[1] = ftData.y;
@@ -656,7 +682,13 @@ public:
         }
 
         if (this->getSensorName().find("Right") != std::string::npos) {
-            iFeel::ForceTorque ftData = paexoImpl->ifeelData.FTShoeNodes[nodeID]->getBackFT();
+            // iFeel::ForceTorque ftData;
+            if (useFTShoeIMUNodes) {
+                ftData = paexoImpl->ifeelData.FTShoeIMUNodes[nodeID]->getFrontFT(); // getBackFT();
+            }
+            else {
+                ftData = paexoImpl->ifeelData.FTShoeNodes[nodeID]->getFrontFT(); // getBackFT();
+            }
 
             force3D[0] = ftData.x;
             force3D[1] = ftData.y;
@@ -694,9 +726,11 @@ public:
 
     bool setMotorPosition(double& value) const override
     {
+        std::lock_guard<std::mutex> guard(paexoImpl->mutex);
         // Prepare the move command
         std::string motorCommand = {};
 
+        /* Currently works only the right part
         if (this->getActuatorName().find("Left") != std::string::npos) {
             motorCommand = "move:l:" + std::to_string(value);
         }
@@ -704,8 +738,9 @@ public:
         if (this->getActuatorName().find("Right") != std::string::npos) {
             motorCommand = "move:r:" + std::to_string(value);
         }
-
-        motorCommand += EOL;
+        */
+        motorCommand = "move:r:" + std::to_string(value);
+        motorCommand += "\n"; //EOL;
 
         char c[motorCommand.length() + 1];
         std::strcpy(c, motorCommand.c_str());
@@ -725,58 +760,82 @@ void Paexo::PaexoImpl::PaexoMotorControlPort::onRead(yarp::os::Bottle& motorComm
     // NOTE: Assuming the associated port received a vector of one double as motor command
     assert(paexoMotorActuator != nullptr);
     // yInfo() << LogPrefix << "Data received on " << portName << motorCommand.toString().c_str();
-
     double cmd = motorCommand.get(0).asDouble();
     paexoMotorActuator.get()->setMotorPosition(cmd);
 }
 
 void Paexo::run()
 {
+    std::lock_guard<std::mutex> lock(pImpl->mutex);
     // Send commands to BLE central serial port
-    {
-        std::lock_guard<std::mutex> lock(pImpl->mutex);
-        if (pImpl->cmdPro->cmdUpdated) {
 
-            int s = pImpl->cmdPro->cmdString.length();
-            char c[s + 1];
-            std::strcpy(c, pImpl->cmdPro->cmdString.c_str());
-            if (pImpl->iSerialDevice->send(c, s)) {
-                pImpl->cmdPro->cmdUpdated = false;
-            }
+    if (pImpl->cmdPro->cmdUpdated) {
+
+        int s = pImpl->cmdPro->cmdString.length();
+        char c[s + 1];
+        std::strcpy(c, pImpl->cmdPro->cmdString.c_str());
+        if (pImpl->iSerialDevice->send(c, s)) {
+            pImpl->cmdPro->cmdUpdated = false;
         }
     }
+    
+    char charMsg[MAX_LINE_LENGTH];
+    int size = pImpl->iSerialDevice->receiveLine(charMsg, MAX_LINE_LENGTH);
+    /*
+    yarp::os::Bottle serialMsg;
+    while (!pImpl->iSerialDevice->receive(serialMsg)){
+        yInfo() << "SERGIO";
+    };
+    std::string msg(serialMsg.toString());
+    */
+    std::string msg(charMsg);
+    pImpl->iSerialDevice->flush();
+    // yInfo() << msg;
 
-    char msg[MAX_LINE_LENGTH];
-    int size = pImpl->iSerialDevice->receiveLine(msg, MAX_LINE_LENGTH);
-
-    if (size > 1) {
+    if (msg.size() > 1) {
 
         // Get timestamp
         pImpl->timeStamp.time = yarp::os::Time::now();
 
+        // Print Uart Message
+        // yInfo() << msg;//std::string(msg);
+
         // Check if the first char is a digit, if it is the received message is broadcast
         // information
-        if (isdigit(msg[0])
-            && (pImpl->cmdPro->measurement_status && pImpl->cmdPro->data_broadcast)) {
+        if (isdigit(msg[0])) {
+            //&& (pImpl->cmdPro->measurement_status && pImpl->cmdPro->data_broadcast)) {
+
+            /*
+            Standard en_bc_data structure:
+               [1] Encoder_Position
+               [2] Spring_Force
+               [3] Right_Leverarm
+               [4] Left_Leverarm
+               [5] Encoder_time
+               [6] Leverarm_time
+            */
 
             // Prepare yarp bottle with serial message and write to yarp port
             yarp::os::Bottle& bc_data = pImpl->dataPort.prepare();
             bc_data.clear();
             bc_data.fromString(msg);
 
-            pImpl->dataPort.write();
-
             // Add baroadcast data to buffer
-            std::lock_guard<std::mutex> lock(pImpl->mutex);
-            pImpl->paexoData.angle = bc_data.get(0).asDouble();
-            pImpl->paexoData.force = bc_data.get(1).asDouble();
-            pImpl->paexoData.leverarm = bc_data.get(2).asDouble();
+            pImpl->paexoData.angle = bc_data.get(1).asDouble();
+            pImpl->paexoData.springForce = bc_data.get(2).asDouble();
+            pImpl->paexoData.rightLeverarm = bc_data.get(3).asDouble();
+            pImpl->paexoData.leftLeverarm = bc_data.get(4).asDouble();
             pImpl->paexoData.updated = true;
+
+            pImpl->dataPort.write();
         }
         else if (!isdigit(msg[0])) {
-            // yInfo() << LogPrefix << msg;
+            yInfo() << "No MSG Valid";
         }
     }
+    // else {
+    //     yWarning() << "No BLE message received!";
+    // }
 
     if (!pImpl->firstDataRead && pImpl->paexoData.updated) {
 
@@ -1038,6 +1097,7 @@ Paexo::getTorque3DSensor(const wearable::sensor::SensorName name) const
 // -------------------
 // FORCE TORQUE Sensor
 // -------------------
+
 #ifdef ENABLE_PAEXO_USE_iFEELDriver
 wearable::SensorPtr<const wearable::sensor::IForceTorque6DSensor>
 wearable::devices::Paexo::getForceTorque6DSensor(const sensor::SensorName name) const
